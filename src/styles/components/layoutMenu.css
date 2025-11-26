@@ -1,0 +1,17 @@
+.submenu {
+  border-left: 1px solid var(--primary-color);
+}
+
+.seccionMenu-inferior {
+  border-top: 1px solid var(--stroke-menu);
+  padding: 10px 0;
+}
+.section-container {
+  background-color: var(--bg-menu);
+  border-right: 1px solid var(--stroke-menu);
+}
+
+.menu-active {
+  background-color: var(--primary-color);
+  color: var(--font-black);
+}
