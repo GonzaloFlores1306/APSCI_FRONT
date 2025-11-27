@@ -111,7 +111,12 @@ const LayoutMenu = () => {
             !open ? "py-6" : "py-4"
           }`}
         >
-          <img src={LogoAPSI} className="h-[60px] w-[60px] " alt="" />
+          <img
+            src={LogoAPSI}
+            className="h-[60px] w-[60px] "
+            alt=""
+            onClick={handleOpen}
+          />
           {!open ? (
             <div>
               <h2 className="font-bold text-2xl">APSCI</h2>
@@ -155,6 +160,7 @@ const LayoutMenu = () => {
                     ) : (
                       <NavLink
                         to={item.url ?? "/"}
+                        onDoubleClick={handleOpen}
                         end
                         className={({ isActive }) =>
                           `cursor-pointer flex w-full items-center justify-between rounded-xl px-3 py-4 text-sm font-medium ${

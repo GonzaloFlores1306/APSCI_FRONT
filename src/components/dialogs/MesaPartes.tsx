@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -29,60 +29,170 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import axios from "../../services/api";
 import { useNavigate } from "react-router-dom";
-import { useExpediente } from "../../context/Expedientes/ExpedienteContext";
+
+interface TipoMateria {
+  idTipoMateria: number;
+  nombre: string;
+  materias: Materia[];
+}
+
+interface Materia {
+  idMateria: number;
+  nombre: string;
+}
+
+interface Requisito {
+  idRequisito: number;
+  nombre: string;
+  obligatorio: boolean;
+}
 
 const MesaPartes = () => {
-  const [selectedMaterias, setSelectedMaterias] = useState<string[]>([]);
+  const [tipos, setTipos] = useState<TipoMateria[]>([]);
+  const [selectedType, setSelectedType] = useState<number | null>(null);
+
+  const [selectedMaterias, setSelectedMaterias] = useState<number[]>([]);
+  const [requisitos, setRequisitos] = useState<Requisito[]>([]);
+  const [checkedDocs, setCheckedDocs] = useState<number[]>([]);
+
   const [open, setOpen] = useState(false);
-  const [selectedType, setSelectedType] = useState<string>("");
-  const [checkedDocs, setCheckedDocs] = useState<string[]>([]);
   const [showAlert, setShowAlert] = useState(false);
+
   const navigate = useNavigate();
-  const { materiasPorTipo, documentosPorMateria, checkDocumentsMP } =
-    useExpediente();
 
-  // Documentos requeridos según las materias seleccionadas
-  const documentosRequeridos = Array.from(
-    new Set(selectedMaterias.flatMap((m) => documentosPorMateria[m] || []))
-  );
+  const user = JSON.parse(localStorage.getItem("userData") || "{}");
+  const token = user?.token || null;
 
-  const handleMateriaChange = (materia: string) => {
+  // ----------------------------------------------------------------
+  // Cargar tipos con materias
+  // ----------------------------------------------------------------
+  useEffect(() => {
+    axios
+      .get("http://localhost:8082/api/materias/tipos", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      .then((res) => {
+        const data = res.data.map((tipo: any) => ({
+          idTipoMateria: tipo.idtipomateria,
+          nombre: tipo.nombreTipoMateria,
+          materias: tipo.materias.map((m: any) => ({
+            idMateria: m.idMateria,
+            nombre: m.nombreMateria,
+          })),
+        }));
+
+        setTipos(data);
+      })
+      .catch((err) => console.error("Error al cargar tipos:", err));
+  }, []);
+
+  // ----------------------------------------------------------------
+  // Cuando cambia el tipo → limpiar materias y requisitos
+  // ----------------------------------------------------------------
+  useEffect(() => {
+    setSelectedMaterias([]);
+    setRequisitos([]);
+    setCheckedDocs([]);
+  }, [selectedType]);
+
+  // ----------------------------------------------------------------
+  // Cargar los requisitos combinados de las materias seleccionadas
+  // ----------------------------------------------------------------
+  useEffect(() => {
+    if (selectedMaterias.length === 0) {
+      setRequisitos([]);
+      return;
+    }
+
+    const requests = selectedMaterias.map((id) =>
+      axios.get(`http://localhost:8082/api/materias/${id}/requisitos-base`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+    );
+
+    Promise.all(requests)
+      .then((responses) => {
+        const allReqs = responses.flatMap((r) => r.data);
+
+        // Eliminar duplicados
+        const uniqueReqs = Array.from(
+          new Map(allReqs.map((req) => [req.idRequisito, req])).values()
+        );
+
+        setRequisitos(uniqueReqs);
+      })
+      .catch((err) => console.error("Error al cargar requisitos:", err));
+  }, [selectedMaterias]);
+
+  const toggleMateria = (id: number) => {
     setSelectedMaterias((prev) =>
-      prev.includes(materia)
-        ? prev.filter((m) => m !== materia)
-        : [...prev, materia]
+      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
     );
   };
 
-  const handleNext = () => {
-    const faltantes = documentosRequeridos.filter(
-      (doc) => !checkedDocs.includes(doc)
+  const toggleDoc = (id: number) => {
+    setCheckedDocs((prev) =>
+      prev.includes(id) ? prev.filter((d) => d !== id) : [...prev, id]
     );
+  };
+
+  // ----------------------------------------------------------------
+  //  CREAR MESA DE PARTES
+  // ----------------------------------------------------------------
+  const handleNext = async () => {
+    const obligatorios = requisitos
+      .filter((r) => r.obligatorio)
+      .map((r) => r.idRequisito);
+
+    const faltantes = obligatorios.filter((id) => !checkedDocs.includes(id));
+
     if (faltantes.length > 0) {
       setShowAlert(true);
-    } else {
-      console.log("✅ Formulario completo:", {
-        tipo: selectedType,
+      return;
+    }
+
+    try {
+      const payload = {
         materias: selectedMaterias,
-        documentos: checkedDocs,
+        idTrabajador: user?.idTrabajador,
+        requisitosSeleccionados: checkedDocs,
+      };
+
+      const response = await axios.post(
+        "http://localhost:8082/api/mesa-partes",
+        payload,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      const mesaPartesCreada = response.data;
+
+      const requisitosCompletos = requisitos.length === checkedDocs.length;
+
+      navigate("/expediente/nuevo", {
+        state: {
+          mesaPartes: mesaPartesCreada,
+          requisitosCompletos,
+          materiasSeleccionadas: selectedMaterias,
+        },
       });
-      checkDocumentsMP(false);
-      navigate("/expedientes/nuevo-expediente");
+
       setOpen(false);
+    } catch (err) {
+      console.error("Error al crear mesa de partes:", err);
+      alert("Error al crear la mesa de partes.");
     }
   };
 
-  const handleDocCheck = (doc: string) => {
-    setCheckedDocs((prev) =>
-      prev.includes(doc) ? prev.filter((d) => d !== doc) : [...prev, doc]
-    );
-  };
-
-  const handleNextAlert = () => {
-    checkDocumentsMP(true);
-    navigate("/expedientes/nuevo-expediente");
-  };
+  // ----------------------------------------------------------------
+  // UI
+  // ----------------------------------------------------------------
   return (
     <>
       <Dialog open={open} onOpenChange={setOpen}>
@@ -92,73 +202,84 @@ const MesaPartes = () => {
             Iniciar Expediente
           </button>
         </DialogTrigger>
+
         <DialogContent className="sm:max-w-[600px] rounded-3xl">
           <DialogHeader>
-            <DialogTitle className="text-2xl font-semibold textTitle">
+            <DialogTitle className="text-2xl font-semibold">
               Mesa de Partes
             </DialogTitle>
             <DialogDescription>
-              Completa la información inicial para iniciar el expediente.
+              Selecciona tipo, materias y documentos.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-6 py-4">
-            {/* Selección de tipo */}
-            <div className="space-y-2">
+            {/* TIPO */}
+            <div>
               <Label>Tipo de expediente</Label>
               <Select
-                value={selectedType}
-                onValueChange={(value) => {
-                  setSelectedType(value);
-                  setSelectedMaterias([]);
-                  setCheckedDocs([]);
-                }}
+                value={selectedType?.toString() || ""}
+                onValueChange={(value) => setSelectedType(Number(value))}
               >
-                <SelectTrigger className="rounded-lg">
+                <SelectTrigger>
                   <SelectValue placeholder="Seleccionar tipo" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="civil">Civil</SelectItem>
-                  <SelectItem value="familiar">Familiar</SelectItem>
+                  {tipos.map((tipo) => (
+                    <SelectItem
+                      key={tipo.idTipoMateria}
+                      value={tipo.idTipoMateria.toString()}
+                    >
+                      {tipo.nombre}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
 
-            {/* Materias dinámicas */}
+            {/* MATERIAS */}
             {selectedType && (
-              <div className="space-y-2">
+              <div>
                 <Label>Materias</Label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {materiasPorTipo[selectedType]?.map((materia) => (
-                    <div
-                      key={materia.value}
-                      className="flex items-center space-x-2"
-                    >
-                      <Checkbox
-                        checked={selectedMaterias.includes(materia.value)}
-                        onCheckedChange={() =>
-                          handleMateriaChange(materia.value)
-                        }
-                      />
-                      <Label>{materia.label}</Label>
-                    </div>
-                  ))}
+                  {tipos
+                    .find((t) => t.idTipoMateria === selectedType)
+                    ?.materias.map((m) => (
+                      <div
+                        key={m.idMateria}
+                        className="flex items-center space-x-2"
+                      >
+                        <Checkbox
+                          checked={selectedMaterias.includes(m.idMateria)}
+                          onCheckedChange={() => toggleMateria(m.idMateria)}
+                        />
+                        <Label>{m.nombre}</Label>
+                      </div>
+                    ))}
                 </div>
               </div>
             )}
 
-            {/* Documentos dinámicos */}
-            {selectedMaterias.length > 0 && (
-              <div className="space-y-2">
-                <Label>Documentos requeridos</Label>
+            {/* REQUISITOS */}
+            {requisitos.length > 0 && (
+              <div>
+                <Label>Requisitos</Label>
                 <div className="flex flex-col space-y-2 max-h-48 overflow-y-auto p-2 border rounded-lg">
-                  {documentosRequeridos.map((doc) => (
-                    <div key={doc} className="flex items-center space-x-2">
+                  {requisitos.map((r) => (
+                    <div
+                      key={r.idRequisito}
+                      className="flex items-center space-x-2"
+                    >
                       <Checkbox
-                        checked={checkedDocs.includes(doc)}
-                        onCheckedChange={() => handleDocCheck(doc)}
+                        checked={checkedDocs.includes(r.idRequisito)}
+                        onCheckedChange={() => toggleDoc(r.idRequisito)}
                       />
-                      <Label>{doc}</Label>
+                      <Label>
+                        {r.nombre}{" "}
+                        {r.obligatorio && (
+                          <span className="text-red-500">*</span>
+                        )}
+                      </Label>
                     </div>
                   ))}
                 </div>
@@ -171,27 +292,27 @@ const MesaPartes = () => {
               Cancelar
             </Button>
             <Button
-              className="rounded-lg cursor-pointer"
-              onClick={handleNext}
               disabled={!selectedType || selectedMaterias.length === 0}
+              onClick={handleNext}
             >
               Siguiente
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      {/* Alerta si faltan documentos */}
+
+      {/* ALERTA DE FALTANTES */}
       <AlertDialog open={showAlert} onOpenChange={setShowAlert}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Advertencia! Faltan documentos</AlertDialogTitle>
+            <AlertDialogTitle>Faltan requisitos obligatorios</AlertDialogTitle>
             <AlertDialogDescription>
-              Debes marcar todos los documentos requeridos antes de continuar.
+              Debes marcar todos los requisitos obligatorios antes de continuar.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleNextAlert}>
+            <AlertDialogCancel>Cerrar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => setShowAlert(false)}>
               Entendido
             </AlertDialogAction>
           </AlertDialogFooter>
